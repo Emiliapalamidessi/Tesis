@@ -1,0 +1,85 @@
+pip install numpy matplotlib scikit-learn
+import numpy as np
+import matplotlib.pyplot as plt
+import ipywidgets as widgets
+from IPython.display import display
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, WhiteKernel
+
+# Grilla de predicción
+X_grid = np.linspace(-5, 5, 200).reshape(-1, 1)
+
+# Datos simulados (5 sensores)
+X_data = np.array([-4.0, -2.0, 0.0, 2.0, 4.0]).reshape(-1, 1)
+y_data = np.array([-1.5, 1.0, 0.0, 1.5, -0.5])
+
+def update_gpr(n_puntos, l_scale, tipo_ruido, nivel_ruido_base):
+    plt.figure(figsize=(10, 6))
+    plt.xlim(-5, 5)
+    plt.ylim(-3, 3)
+    plt.title(f'GPR: {tipo_ruido}')
+    plt.xlabel('X (Predictor)')
+    plt.ylabel('Y (Predictando)')
+    
+    if n_puntos > 0:
+        X_train = X_data[:n_puntos]
+        y_train = y_data[:n_puntos]
+        
+        # Lógica para elegir cómo modelamos el ruido
+        if tipo_ruido == 'Homocedástico (WhiteKernel)':
+            # Se suma el WhiteKernel al RBF. Alpha debe ser 0 para no duplicar ruido.
+            kernel = 1.0 * RBF(length_scale=l_scale) + WhiteKernel(noise_level=nivel_ruido_base)
+            gpr = GaussianProcessRegressor(kernel=kernel, alpha=0.0, optimizer=None)
+            errores_y = np.full(n_puntos, np.sqrt(nivel_ruido_base)) # Para dibujar las barritas
+            
+        elif tipo_ruido == 'Homocedástico (Alpha: escalar)':
+            # Solo RBF. El ruido se pasa como un único valor a alpha.
+            kernel = 1.0 * RBF(length_scale=l_scale)
+            gpr = GaussianProcessRegressor(kernel=kernel, alpha=nivel_ruido_base, optimizer=None)
+            errores_y = np.full(n_puntos, np.sqrt(nivel_ruido_base))
+            
+        else:
+            # Heterocedástico: Diferente ruido por punto.
+            kernel = 1.0 * RBF(length_scale=l_scale)
+            # Simulamos que los sensores de la izquierda (X < 0) son precisos, 
+            # y los de la derecha (X > 0) bajo la mediasombra tienen 50 veces más error.
+            ruido_array = np.where(X_train > 0, 0.4, 0.01).flatten()
+            gpr = GaussianProcessRegressor(kernel=kernel, alpha=ruido_array, optimizer=None)
+            errores_y = np.sqrt(ruido_array)
+
+        # Entrenamos
+        gpr.fit(X_train, y_train)
+        
+        # Dibujamos los puntos con sus barras de error para visualizar la incertidumbre
+        plt.errorbar(X_train.flatten(), y_train, yerr=errores_y, fmt='ro', 
+                     capsize=5, zorder=5, label='Obs (con su error)')
+        
+    else:
+        # Prior simple si no hay puntos
+        kernel = 1.0 * RBF(length_scale=l_scale)
+        gpr = GaussianProcessRegressor(kernel=kernel, optimizer=None)
+
+    # Predicción
+    y_mean, y_std = gpr.predict(X_grid, return_std=True)
+    
+    # Gráficos
+    plt.plot(X_grid, y_mean, 'b-', lw=2, label='Media predictiva')
+    plt.fill_between(X_grid.ravel(), 
+                     y_mean - 1.96 * y_std, 
+                     y_mean + 1.96 * y_std, 
+                     alpha=0.2, color='blue', label='Incertidumbre (95%)')
+    
+    plt.legend(loc='upper right')
+    plt.grid(True, alpha=0.3)
+    plt.show()
+
+# Controles de Colab
+interact_plot = widgets.interact(update_gpr, 
+                 n_puntos=widgets.IntSlider(value=5, min=0, max=5, step=1, description='Sensores:'),
+                 l_scale=widgets.FloatSlider(value=1.0, min=0.1, max=4.0, step=0.1, description='Suavidad:'),
+                 tipo_ruido=widgets.Dropdown(
+                     options=['Homocedástico (WhiteKernel)', 'Homocedástico (Alpha: escalar)', 'Heterocedástico (Alpha: array)'],
+                     value='Heterocedástico (Alpha: array)',
+                     description='Estrategia:'
+                 ),
+                 nivel_ruido_base=widgets.FloatSlider(value=0.05, min=0.001, max=0.5, step=0.01, description='Ruido base:'))
